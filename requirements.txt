@@ -304,9 +304,6 @@ sortedcontainers==2.4.0
 soundfile==0.13.1
 soupsieve==2.6
 soxr==0.5.0.post1
-spacy==3.8.4
-spacy-legacy==3.0.12
-spacy-loggers==1.0.5
 SpeechRecognition==3.10.0
 SQLAlchemy==2.0.36
 srsly==2.5.1
