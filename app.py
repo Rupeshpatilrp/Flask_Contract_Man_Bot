@@ -8,12 +8,11 @@ import tiktoken
 import numpy as np
 from config import OPENAI_API_KEY
 import re
-from deep_translator import GoogleTranslator  # ✅ deep-translator version
+from deep_translator import GoogleTranslator  # ✅ using deep-translator
 import fitz
 
 openai.api_key = OPENAI_API_KEY
 app = Flask(__name__)
-translator = Translator()
 
 def load_docs_from_folder(folder_path="doc") -> List[dict]:
     docs = []
@@ -55,7 +54,6 @@ def get_relevant_chunks(question, all_docs):
         for c in chunk_text(doc["content"]):
             chunks.append({"text": c, "source": doc["name"]})
 
-    # Validate and clean text
     texts = [c['text'] for c in chunks if isinstance(c['text'], str) and c['text'].strip() != ""]
 
     if not texts:
@@ -99,21 +97,19 @@ def generate_answer(question: str, context_chunks: List[dict]):
         )
         english = response['choices'][0]['message']['content'].strip()
         english_cleaned = re.sub(r'\*\*(.*?)\*\*', r'\1', english)
-        
-        # If the response is still in Hindi, translate it to English
+
+        # Translate to English if detected non-English
         try:
-            detected_lang = translator.detect(english_cleaned).lang
-            if detected_lang == 'hi':
-                english_cleaned = translator.translate(english_cleaned, src='hi', dest='en').text
+            english_cleaned = GoogleTranslator(source='auto', target='en').translate(english_cleaned)
         except:
-            pass  # If detection fails, proceed with original text
-        
-        # Add document references
+            pass
+
+        # Add references
         sources = list(set([chunk['source'] for chunk in context_chunks]))
         english_source_text = f"\n\n(Reference: {', '.join(sources)})"
         hindi_source_text = f"\n\n(संदर्भ: {', '.join(sources)})"
-        
-        hindi = translator.translate(english_cleaned, dest='hi').text
+
+        hindi = GoogleTranslator(source='auto', target='hi').translate(english_cleaned)
         return english_cleaned + english_source_text, hindi + hindi_source_text
     except Exception as e:
         return f"Answer generation failed: {e}", ""
@@ -129,25 +125,22 @@ def index():
 
     if request.method == "POST":
         question = request.form.get("question")
-        translate_option = request.form.get("translate_option", "both")  # NEW: Get translation option
+        translate_option = request.form.get("translate_option", "both")
         
         if question:
-            translated_question = GoogleTranslator(source='auto', target='en').translate(question)
-            top_chunks, error = get_relevant_chunks(translated_question, docs)
+            top_chunks, error = get_relevant_chunks(question, docs)
             if not error:
-                english_answer, hindi_answer = generate_answer(translated_question, top_chunks)
+                english_answer, hindi_answer = generate_answer(question, top_chunks)
                 html_answer_en = markdown2.markdown(english_answer)
                 html_answer_hi = markdown2.markdown(hindi_answer)
                 
-                # NEW: Handle different translation options
                 if translate_option == "english_only":
                     html_answer = f"<h3>English:</h3>{html_answer_en}"
                 elif translate_option == "hindi_to_english":
-                    # Translate Hindi back to English for comparison
-                    hindi_to_english = translator.translate(hindi_answer, src='hi', dest='en').text
+                    hindi_to_english = GoogleTranslator(source='auto', target='en').translate(hindi_answer)
                     html_answer_hte = markdown2.markdown(hindi_to_english)
                     html_answer = f"<h3>हिंदी:</h3>{html_answer_hi}<hr><h3>Hindi to English Translation:</h3>{html_answer_hte}"
-                else:  # both (default)
+                else:
                     html_answer = f"<h3>English:</h3>{html_answer_en}<hr><h3>हिंदी:</h3>{html_answer_hi}"
         else:
             error = "Please enter a question."
