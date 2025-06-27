@@ -8,7 +8,7 @@ import tiktoken
 import numpy as np
 from config import OPENAI_API_KEY
 import re
-from deep_translator import GoogleTranslator  # ✅ using deep-translator
+from deep_translator import GoogleTranslator
 import fitz
 
 openai.api_key = OPENAI_API_KEY
@@ -21,6 +21,8 @@ def load_docs_from_folder(folder_path="doc") -> List[dict]:
     for filename in os.listdir(folder_path):
         file_path = os.path.join(folder_path, filename)
         try:
+            if os.path.getsize(file_path) > 5 * 1024 * 1024:
+                continue  # skip large files > 5MB
             if filename.endswith(".docx"):
                 doc = Document(file_path)
                 full_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
@@ -31,11 +33,11 @@ def load_docs_from_folder(folder_path="doc") -> List[dict]:
                     for page in pdf:
                         text += page.get_text()
                 docs.append({"name": filename, "content": text})
-        except Exception as e:
-            continue  # skip file if error
+        except Exception:
+            continue
     return docs
 
-def chunk_text(text: str, max_tokens=400) -> List[str]:
+def chunk_text(text: str, max_tokens=200) -> List[str]:
     tokenizer = tiktoken.encoding_for_model("gpt-4")
     sentences = text.split('. ')
     chunks, chunk = [], ""
@@ -54,8 +56,7 @@ def get_relevant_chunks(question, all_docs):
         for c in chunk_text(doc["content"]):
             chunks.append({"text": c, "source": doc["name"]})
 
-    texts = [c['text'] for c in chunks if isinstance(c['text'], str) and c['text'].strip() != ""]
-
+    texts = [c['text'] for c in chunks if isinstance(c['text'], str) and c['text'].strip()]
     if not texts:
         return [], "No valid text found for embedding."
 
@@ -69,7 +70,7 @@ def get_relevant_chunks(question, all_docs):
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
     scored_chunks = []
-    valid_chunks = [c for c in chunks if isinstance(c['text'], str) and c['text'].strip() != ""]
+    valid_chunks = [c for c in chunks if isinstance(c['text'], str) and c['text'].strip()]
     for chunk, emb in zip(valid_chunks, chunk_embeddings):
         score = cosine_similarity(question_embedding, emb["embedding"])
         scored_chunks.append((score, chunk))
@@ -86,9 +87,10 @@ def generate_answer(question: str, context_chunks: List[dict]):
         "If the user requests a tabular format, return the answer as a markdown table. "
         "Cite filenames where applicable. Be precise and helpful."
     )
+
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o",
+            model="gpt-4o",  # You can replace this with "gpt-3.5-turbo" if needed
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {question}"}
@@ -98,19 +100,16 @@ def generate_answer(question: str, context_chunks: List[dict]):
         english = response['choices'][0]['message']['content'].strip()
         english_cleaned = re.sub(r'\*\*(.*?)\*\*', r'\1', english)
 
-        # Translate to English if detected non-English
-        try:
-            english_cleaned = GoogleTranslator(source='auto', target='en').translate(english_cleaned)
-        except:
-            pass
+        # Detect and translate if Hindi response
+        detected_lang = GoogleTranslator(source='auto', target='en').translate(english_cleaned)
+        english_translated = detected_lang
 
-        # Add references
         sources = list(set([chunk['source'] for chunk in context_chunks]))
         english_source_text = f"\n\n(Reference: {', '.join(sources)})"
         hindi_source_text = f"\n\n(संदर्भ: {', '.join(sources)})"
 
-        hindi = GoogleTranslator(source='auto', target='hi').translate(english_cleaned)
-        return english_cleaned + english_source_text, hindi + hindi_source_text
+        hindi = GoogleTranslator(source='en', target='hi').translate(english_translated)
+        return english_translated + english_source_text, hindi + hindi_source_text
     except Exception as e:
         return f"Answer generation failed: {e}", ""
 
@@ -120,24 +119,24 @@ def index():
     html_answer = ""
     question = ""
     error = ""
-    docs = load_docs_from_folder("doc")
-    num_docs = len(docs)
+    docs = load_docs_from_folder("doc")[:5]  # Limit number of docs
 
     if request.method == "POST":
         question = request.form.get("question")
         translate_option = request.form.get("translate_option", "both")
-        
+
         if question:
-            top_chunks, error = get_relevant_chunks(question, docs)
+            translated_question = GoogleTranslator(source='auto', target='en').translate(question)
+            top_chunks, error = get_relevant_chunks(translated_question, docs)
             if not error:
-                english_answer, hindi_answer = generate_answer(question, top_chunks)
+                english_answer, hindi_answer = generate_answer(translated_question, top_chunks)
                 html_answer_en = markdown2.markdown(english_answer)
                 html_answer_hi = markdown2.markdown(hindi_answer)
-                
+
                 if translate_option == "english_only":
                     html_answer = f"<h3>English:</h3>{html_answer_en}"
                 elif translate_option == "hindi_to_english":
-                    hindi_to_english = GoogleTranslator(source='auto', target='en').translate(hindi_answer)
+                    hindi_to_english = GoogleTranslator(source='hi', target='en').translate(hindi_answer)
                     html_answer_hte = markdown2.markdown(hindi_to_english)
                     html_answer = f"<h3>हिंदी:</h3>{html_answer_hi}<hr><h3>Hindi to English Translation:</h3>{html_answer_hte}"
                 else:
@@ -145,7 +144,7 @@ def index():
         else:
             error = "Please enter a question."
 
-    return render_template("index.html", answer=html_answer, question=question, num_docs=num_docs, error=error)
+    return render_template("index.html", answer=html_answer, question=question, num_docs=len(docs), error=error)
 
 if __name__ == "__main__":
     app.run(debug=True)
