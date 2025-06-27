@@ -8,7 +8,7 @@ import tiktoken
 import numpy as np
 from config import OPENAI_API_KEY
 import re
-from googletrans import Translator
+from deep_translator import GoogleTranslator  # ✅ deep-translator version
 import fitz
 
 openai.api_key = OPENAI_API_KEY
@@ -132,9 +132,10 @@ def index():
         translate_option = request.form.get("translate_option", "both")  # NEW: Get translation option
         
         if question:
-            top_chunks, error = get_relevant_chunks(question, docs)
+            translated_question = GoogleTranslator(source='auto', target='en').translate(question)
+            top_chunks, error = get_relevant_chunks(translated_question, docs)
             if not error:
-                english_answer, hindi_answer = generate_answer(question, top_chunks)
+                english_answer, hindi_answer = generate_answer(translated_question, top_chunks)
                 html_answer_en = markdown2.markdown(english_answer)
                 html_answer_hi = markdown2.markdown(hindi_answer)
                 
